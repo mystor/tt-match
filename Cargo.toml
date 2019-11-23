@@ -1,5 +1,5 @@
 [package]
-name = "matcher"
+name = "tt-match"
 version = "0.1.0"
 authors = ["Nika Layzell <nika@thelayzells.com>"]
 edition = "2018"

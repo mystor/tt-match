@@ -12,7 +12,11 @@ pub mod __rt;
 /// The whole point
 #[macro_export]
 macro_rules! tt_matcher {
-    ($vis:vis match fn $name:ident($($t:tt)*) -> $T:ty { $($e:tt)* }) => {
+    (
+        $(#[$m:meta])*
+        $vis:vis match fn $name:ident($($t:tt)*) -> $T:ty { $($e:tt)* }
+    ) => {
+        $(#[$m])*
         $vis fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$T> {
             // let var = Pending::new();
             $crate::match_each_cap!([match_wrapper_cb! new] $($t)*);
@@ -22,9 +26,22 @@ macro_rules! tt_matcher {
             $crate::match_each_cap!([match_wrapper_cb! finish] $($t)*);
 
             // Pattern Code
-            Ok((|| -> $T { $($e:tt)* })())
+            Ok((|| -> $T { $($e)* })())
         }
     };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! match_subparser {
+    ($input:ident $($inner:tt)*) => {{
+        // let var = var.enter();
+        $crate::match_each_cap!([match_wrapper_cb! enter] $($inner)*);
+        // -- parsing --
+        $crate::match_each_token!([match_token_cb! $input] $($inner)*);
+        // var.exit();
+        $crate::match_each_cap!([match_wrapper_cb! exit] $($inner)*);
+    }};
 }
 
 // Tries to run a subparser. Expands to an expression evaluating to `true` on
@@ -42,17 +59,10 @@ macro_rules! match_try_parse {
     ($input:ident $($inner:tt)*) => {
         (|| -> $crate::__rt::Result<()> {
             let fork = $input.fork();
-            // let var = var.enter();
-            $crate::match_each_cap!([match_wrapper_cb! enter] $($inner)*);
-            // -- parsing --
-            $crate::match_each_token!([match_token_cb! fork] $($inner)*);
-            // var.exit();
-            $crate::match_each_cap!([match_wrapper_cb! exit] $($inner)*);
+            $crate::match_subparser!(fork $($inner)*);
 
-            {
-                use $crate::__rt::Speculative;
-                $input.advance_to(&fork);
-            }
+            use $crate::__rt::Speculative;
+            $input.advance_to(&fork);
             $crate::__rt::Ok(())
         })().is_ok()
     };
@@ -86,21 +96,41 @@ macro_rules! match_token_cb {
     // FIXME: Consider matching certain `$other` values, such as idents &
     // operators, in a more efficient manner.
     ($input:ident Tok $other:tt) => {
-        $crate::__rt::match_parse(&mut $input, stringify!($other))?;
+        $crate::__rt::match_parse(&$input, stringify!($other))?;
     };
 
     // #(...)*
-    ($input:ident Rep $($inner:tt)*) => {
+    ($input:ident Rep $($inner:tt)+) => {
         $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
         while $crate::match_try_parse!($input $($inner)*) { }
     };
     // #(...),*
-    ($input:ident RepSep $sep:tt $($inner:tt)*) => {
+    ($input:ident RepSep $sep:tt $($inner:tt)+) => {
         $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
         if $crate::match_try_parse!($input $($inner)*) {
             // Repeatedly try to parse with a leading `sep`.
             while $crate::match_try_parse!($input $sep $($inner)*) { }
         }
+    };
+    // #(...)+
+    ($input:ident Rep1 $($inner:tt)+) => {
+        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+
+        $crate::match_subparser!($input $($inner)*);
+        while $crate::match_try_parse!($input $($inner)*) { }
+    };
+    // #(...),+
+    ($input:ident RepSep1 $sep:tt $($inner:tt)+) => {
+        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+
+        $crate::match_subparser!($input $($inner)*);
+        // Repeatedly try to parse with a leading `sep`.
+        while $crate::match_try_parse!($input $sep $($inner)*) { }
+    };
+    // #(...)?
+    ($input:ident Opt $($inner:tt)+) => {
+        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        let _ = $crate::match_try_parse!($input $($inner)*);
     };
 
     // Default `Parse` handling for a single capture.
@@ -158,14 +188,29 @@ macro_rules! match_each_cap_cb {
     ($cb:tt $wr:tt Tok $t:tt) => {};
 
     // complex non-terminals
-    ($cb:tt [$($wr:ident)*] Rep $($inner:tt)*) => {
+    ($cb:tt [$($wr:ident)*] Rep $($inner:tt)+) => {
         $crate::match_each_token!(
             [match_each_cap_cb! $cb [$($wr)* Vec]] $($inner)*
         );
     };
-    ($cb:tt [$($wr:ident)*] RepSep $sep:tt $($inner:tt)*) => {
+    ($cb:tt [$($wr:ident)*] RepSep $sep:tt $($inner:tt)+) => {
         $crate::match_each_token!(
             [match_each_cap_cb! $cb [$($wr)* Vec]] $($inner)*
+        );
+    };
+    ($cb:tt [$($wr:ident)*] Rep1 $($inner:tt)+) => {
+        $crate::match_each_token!(
+            [match_each_cap_cb! $cb [$($wr)* Vec]] $($inner)*
+        );
+    };
+    ($cb:tt [$($wr:ident)*] RepSep1 $sep:tt $($inner:tt)+) => {
+        $crate::match_each_token!(
+            [match_each_cap_cb! $cb [$($wr)* Vec]] $($inner)*
+        );
+    };
+    ($cb:tt [$($wr:ident)*] Opt $($inner:tt)+) => {
+        $crate::match_each_token!(
+            [match_each_cap_cb! $cb [$($wr)* Option]] $($inner)*
         );
     };
 
@@ -179,8 +224,26 @@ macro_rules! match_each_cap_cb {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! MatchCapTy {
+    ([] item) => { $crate::__rt::Item };
+    ([] block) => { $crate::__rt::Block };
+    ([] stmt) => { $crate::__rt::Stmt };
+    ([] pat) => { $crate::__rt::Pat };
+    ([] expr) => { $crate::__rt::Expr };
+    ([] ty) => { $crate::__rt::Type };
     ([] ident) => { $crate::__rt::Ident };
+    ([] path) => { $crate::__rt::Path };
     ([] tt) => { $crate::__rt::TokenTree };
+    ([] lifetime) => { $crate::__rt::Lifetime };
+    ([] vis) => { $crate::__rt::Visibility };
+
+    // FIXME: This doesn't handle negative numbers, which should be handled to
+    // match with `macro_rules!`.
+    ([] literal) => { $crate::__rt::Lit };
+
+    // TODO: Figure out what is going on with `:meta`
+    // We don't want to use `Meta`, as that won't match `path (...anything...)`,
+    // which is matched by `macro_rules!`.
+    // ([] meta) => { $crate::__rt::?? };
 
     ([$T:ident $($wr:ident)*] $kind:ident) => {
         $crate::__rt::$T::<$crate::MatchCapTy![[$($wr)*] $kind]>
@@ -198,7 +261,7 @@ macro_rules! MatchCapTy {
 #[doc(hidden)]
 macro_rules! match_each_token {
     ($cfg:tt $($tts:tt)*) => {
-        $crate::match_tokens_with_context!(
+        $crate::match_each_token_with_context!(
             $cfg
             (@ @ @ @ @ @ $($tts)*)
             (@ @ @ @ @ $($tts)* @)
@@ -246,6 +309,28 @@ macro_rules! match_token_with_context {
     ($cb:tt $b3:tt $b2:tt # (( $($inner:tt)* )) $sep:tt * $a3:tt) => {};
     ($cb:tt $b3:tt # ( $($inner:tt)* ) ($sep:tt) * $a2:tt $a3:tt) => {};
     ($cb:tt # ( $($inner:tt)* ) $sep:tt (*) $a1:tt $a2:tt $a3:tt) => {};
+
+    // #(...)* => cb!(Rep1 ...)
+    ($cb:tt $b3:tt $b2:tt $b1:tt (#) ( $($inner:tt)* ) + $a3:tt) => {
+        $crate::match_call_cb!($cb Rep1 $($inner)*);
+    };
+    ($cb:tt $b3:tt $b2:tt # (( $($inner:tt)* )) + $a2:tt $a3:tt) => {};
+    ($cb:tt $b3:tt # ( $($inner:tt)* ) (+) $a1:tt $a2:tt $a3:tt) => {};
+
+    // #(...),* => cb!(RepSep1 , ...)
+    ($cb:tt $b3:tt $b2:tt $b1:tt (#) ( $($inner:tt)* ) $sep:tt +) => {
+        $crate::match_call_cb!($cb RepSep1 $sep $($inner)*);
+    };
+    ($cb:tt $b3:tt $b2:tt # (( $($inner:tt)* )) $sep:tt + $a3:tt) => {};
+    ($cb:tt $b3:tt # ( $($inner:tt)* ) ($sep:tt) + $a2:tt $a3:tt) => {};
+    ($cb:tt # ( $($inner:tt)* ) $sep:tt (+) $a1:tt $a2:tt $a3:tt) => {};
+
+    // #(...)? => cb!(Opt ...)
+    ($cb:tt $b3:tt $b2:tt $b1:tt (#) ( $($inner:tt)* ) ? $a3:tt) => {
+        $crate::match_call_cb!($cb Opt $($inner)*);
+    };
+    ($cb:tt $b3:tt $b2:tt # (( $($inner:tt)* )) ? $a2:tt $a3:tt) => {};
+    ($cb:tt $b3:tt # ( $($inner:tt)* ) (?) $a1:tt $a2:tt $a3:tt) => {};
 
     // #var:kind => cb!(Cap var : kind)
     ($cb:tt $b3:tt $b2:tt $b1:tt (#) $var:ident : $kind:ident) => {

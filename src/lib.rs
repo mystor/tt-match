@@ -19,11 +19,11 @@ macro_rules! tt_matcher {
         $(#[$m])*
         $vis fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$T> {
             // let var = Pending::new();
-            $crate::match_each_cap!([match_wrapper_cb! new] $($t)*);
+            $crate::match_each_cap!(new $($t)*);
             // -- parsing --
             $crate::match_each_token!([match_token_cb! input] $($t)*);
             // let var = var.finish();
-            $crate::match_each_cap!([match_wrapper_cb! finish] $($t)*);
+            $crate::match_each_cap!(finish $($t)*);
 
             // Pattern Code
             Ok((|| -> $T { $($e)* })())
@@ -36,11 +36,11 @@ macro_rules! tt_matcher {
 macro_rules! match_subparser {
     ($input:ident $($inner:tt)*) => {{
         // let var = var.enter();
-        $crate::match_each_cap!([match_wrapper_cb! enter] $($inner)*);
+        $crate::match_each_cap!(enter $($inner)*);
         // -- parsing --
         $crate::match_each_token!([match_token_cb! $input] $($inner)*);
         // var.exit();
-        $crate::match_each_cap!([match_wrapper_cb! exit] $($inner)*);
+        $crate::match_each_cap!(exit $($inner)*);
     }};
 }
 
@@ -101,12 +101,12 @@ macro_rules! match_token_cb {
 
     // #(...)*
     ($input:ident Rep $($inner:tt)+) => {
-        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        $crate::match_each_cap!(set_default $($inner)*);
         while $crate::match_try_parse!($input $($inner)*) { }
     };
     // #(...),*
     ($input:ident RepSep $sep:tt $($inner:tt)+) => {
-        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        $crate::match_each_cap!(set_default $($inner)*);
         if $crate::match_try_parse!($input $($inner)*) {
             // Repeatedly try to parse with a leading `sep`.
             while $crate::match_try_parse!($input $sep $($inner)*) { }
@@ -114,14 +114,14 @@ macro_rules! match_token_cb {
     };
     // #(...)+
     ($input:ident Rep1 $($inner:tt)+) => {
-        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        $crate::match_each_cap!(set_default $($inner)*);
 
         $crate::match_subparser!($input $($inner)*);
         while $crate::match_try_parse!($input $($inner)*) { }
     };
     // #(...),+
     ($input:ident RepSep1 $sep:tt $($inner:tt)+) => {
-        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        $crate::match_each_cap!(set_default $($inner)*);
 
         $crate::match_subparser!($input $($inner)*);
         // Repeatedly try to parse with a leading `sep`.
@@ -129,33 +129,13 @@ macro_rules! match_token_cb {
     };
     // #(...)?
     ($input:ident Opt $($inner:tt)+) => {
-        $crate::match_each_cap!([match_wrapper_cb! set_default] $($inner)*);
+        $crate::match_each_cap!(set_default $($inner)*);
         let _ = $crate::match_try_parse!($input $($inner)*);
     };
 
     // Default `Parse` handling for a single capture.
     ($input:ident Cap $var:ident : $kind:ident) => {
         let $var = $var.set($input.parse()?);
-    };
-}
-
-#[macro_export]
-#[doc(hidden)]
-macro_rules! match_wrapper_cb {
-    (new $var:ident : $T:ty) => {
-        let $var = <$crate::__rt::Pending<$T>>::new();
-    };
-    (finish $var:ident : $T:ty) => {
-        let $var = $var.finish();
-    };
-    (set_default $var:ident : $T:ty) => {
-        let mut $var = $var.set_default();
-    };
-    (enter $var:ident : $T:ty) => {
-        let $var = $var.enter();
-    };
-    (exit $var:ident : $T:ty) => {
-        $var.exit();
     };
 }
 
@@ -215,8 +195,20 @@ macro_rules! match_each_cap_cb {
     };
 
     // captures
-    ($cb:tt $wr:tt Cap $var:ident : $kind:ident) => {
-        $crate::match_call_cb!($cb $var: $crate::MatchCapTy![$wr $kind]);
+    (new $wr:tt Cap $var:ident : $kind:ident) => {
+        let $var = <$crate::__rt::Pending<$crate::MatchCapTy![$wr $kind]>>::new();
+    };
+    (finish $wr:tt Cap $var:ident : $kind:ident) => {
+        let $var = $var.finish();
+    };
+    (set_default $wr:tt Cap $var:ident : $kind:ident) => {
+        let mut $var = $var.set_default();
+    };
+    (enter $wr:tt Cap $var:ident : $kind:ident) => {
+        let $var = $var.enter();
+    };
+    (exit $wr:tt Cap $var:ident : $kind:ident) => {
+        $var.exit();
     };
 }
 

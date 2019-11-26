@@ -11,8 +11,8 @@ pub use std::result::Result::{Err, Ok};
 pub use std::vec::Vec;
 
 pub use syn::parse::discouraged::Speculative;
-pub use syn::parse::ParseStream;
-pub use syn::{Expr, Ident, Result};
+pub use syn::parse::{ParseStream, Parser};
+pub use syn::{Expr, Ident, Result, Error};
 
 pub use proc_macro2::{TokenStream, TokenTree};
 

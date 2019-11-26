@@ -9,6 +9,128 @@ pub use syn::{
 #[path = "runtime.rs"]
 pub mod __rt;
 
+#[macro_export]
+macro_rules! token_matcher {
+    (in $input:ident=> $( ( $($t:tt)* ) => { $($e:tt)* } )*) => {
+        $(
+            match $crate::__rt::TokenSource::try_parse(
+                &input,
+                |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
+                     x
+                },
+            ) {
+                $crate::__rt::Ok(()) => {
+                    f
+                }
+            }
+        )*
+    };
+
+    ($(#[$m:meta])* $vis:vis fn $name:ident -> $rt:ty; $($t:tt)*) => {
+        $(#[$m])*
+        $vis fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$rt> {
+            $crate::token_matcher!(in input=> $($t)*);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! tt_match {
+    (
+        match $input:expr => {
+            $( ( $($t:tt)* ) => { $($e:tt)* } )*
+        }
+    ) => {
+        loop {
+            let input: $crate::__rt::TokenStream = $input.into();
+            let mut fused = $crate::__rt::Error::new_spanned(
+                &input, "no rules matched this input",
+            );
+
+            $(
+                match $crate::__rt::Parser::parse2(
+                    |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
+                        // let var = Pending::new();
+                        $crate::match_each_cap!(new $($t)*);
+                        // -- parsing --
+                        $crate::match_each_token!([match_token_cb! input] $($t)*);
+                        if !input.is_empty() {
+                            return $crate::__rt::Err(input.error("unexpected token"));
+                        }
+                        // let var = var.finish();
+                        $crate::match_each_cap!(finish $($t)*);
+
+                        // Pattern Code
+                        $crate::__rt::Ok((|| { $($e)* })())
+                    },
+                    $input.into(),
+                ) {
+                    $crate::__rt::Ok(x) => break $crate::__rt::Ok(x),
+                    $crate::__rt::Err(err) => fused.combine(err),
+                }
+            )*
+
+            break $crate::__rt::Err(fused);
+        }
+    };
+}
+
+/// Parser lambda with the signature `Fn(ParseStream) -> syn::Result<$T>`.
+///
+/// Lambda will implement [`syn::parse::Parser`].
+///
+/// ```
+/// # use tt_match::tt_match_parser;
+/// let parser = tt_match_parser! {
+///     (#(#id:ident),*) -> Vec<syn::Ident> { id }
+/// };
+/// ```
+///
+/// ```
+/// # use tt_match::tt_match_parser;
+/// let parser = tt_match_parser!(-> (bool, Vec<syn::Ident>) {
+///     (#(Yes #id:ident),*) => { (true, id) }
+///     (#(No #id:ident),*) => { (false, id) }
+/// });
+/// ```
+#[macro_export]
+macro_rules! tt_match_parser {
+    (($($t:tt)*) -> $T:ty { $($e:tt)* }) => {
+        |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<$T> {
+            // let var = Pending::new();
+            $crate::match_each_cap!(new $($t)*);
+            // -- parsing --
+            $crate::match_each_token!([match_token_cb! input] $($t)*);
+            if !input.is_empty() {
+                return $crate::__rt::Err(input.error("unexpected token"));
+            }
+            // let var = var.finish();
+            $crate::match_each_cap!(finish $($t)*);
+
+            // Pattern Code
+            $crate::__rt::Ok((|| -> $T { $($e)* })())
+        }
+    };
+    (-> $T:ty { $(( $($t:tt)* ) => { $($e:tt)* })* }) => {
+        |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<$T> {
+            let mut fused = input.error("no rules matched this input");
+            $({
+                let fork = input.fork();
+                let parser = $crate::tt_match_parser!(($($t)*) -> $T { $($e)* });
+                match parser(&fork) {
+                    $crate::__rt::Ok(x) => {
+                        use $crate::__rt::Speculative;
+                        input.advance_to(&fork);
+                        return $crate::__rt::Ok(x);
+                    },
+                    $crate::__rt::Err(err) => fused.combine(err),
+                }
+            })*
+            $crate::__rt::Err(fused)
+        }
+    };
+}
+
 /// The whole point
 #[macro_export]
 macro_rules! tt_matcher {
@@ -26,7 +148,7 @@ macro_rules! tt_matcher {
             $crate::match_each_cap!(finish $($t)*);
 
             // Pattern Code
-            Ok((|| -> $T { $($e)* })())
+            $crate::__rt::Ok((|| -> $T { $($e)* })())
         }
     };
 }
@@ -64,32 +186,41 @@ macro_rules! match_try_parse {
             use $crate::__rt::Speculative;
             $input.advance_to(&fork);
             $crate::__rt::Ok(())
-        })().is_ok()
+        })()
     };
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! match_token_cb {
-    // NOTE: These use `drop(content)` explicitly, rather than introducing a
-    // scope, as logic depends on a flat namespace while matching non-{rep,opt}
-    // tokens.
+    // NOTE: These use `drop(content)`, and check for `ParseBuffer` emptiness
+    // explicitly, rather than introducing a scope, as logic depends on a flat
+    // namespace while matching non-{rep,opt} tokens.
     ($input:ident Tok ( $($inner:tt)* )) => {
         let content;
         $crate::_syn_parenthesized!(content in $input);
         $crate::match_each_token!([match_token_cb! content] $($inner)*);
+        if !content.is_empty() {
+            return Err(content.error("unexpected token"));
+        }
         $crate::__rt::drop(content);  // Scope `content` var.
     };
     ($input:ident Tok [ $($inner:tt)* ]) => {
         let content;
         $crate::_syn_bracketed!(content in $input);
         $crate::match_each_token!([match_token_cb! content] $($inner)*);
+        if !content.is_empty() {
+            return Err(content.error("unexpected token"));
+        }
         $crate::__rt::drop(content);  // Scope `content` var.
     };
     ($input:ident Tok { $($inner:tt)* }) => {
         let content;
         $crate::_syn_braced!(content in $input);
         $crate::match_each_token!([match_token_cb! content] $($inner)*);
+        if !content.is_empty() {
+            return Err(content.error("unexpected token"));
+        }
         $crate::__rt::drop(content);  // Scope `content` var.
     };
 
@@ -102,14 +233,14 @@ macro_rules! match_token_cb {
     // #(...)*
     ($input:ident Rep $($inner:tt)+) => {
         $crate::match_each_cap!(set_default $($inner)*);
-        while $crate::match_try_parse!($input $($inner)*) { }
+        while $crate::match_try_parse!($input $($inner)*).is_ok() { }
     };
     // #(...),*
     ($input:ident RepSep $sep:tt $($inner:tt)+) => {
         $crate::match_each_cap!(set_default $($inner)*);
-        if $crate::match_try_parse!($input $($inner)*) {
+        if $crate::match_try_parse!($input $($inner)*).is_ok() {
             // Repeatedly try to parse with a leading `sep`.
-            while $crate::match_try_parse!($input $sep $($inner)*) { }
+            while $crate::match_try_parse!($input $sep $($inner)*).is_ok() { }
         }
     };
     // #(...)+
@@ -117,7 +248,7 @@ macro_rules! match_token_cb {
         $crate::match_each_cap!(set_default $($inner)*);
 
         $crate::match_subparser!($input $($inner)*);
-        while $crate::match_try_parse!($input $($inner)*) { }
+        while $crate::match_try_parse!($input $($inner)*).is_ok() { }
     };
     // #(...),+
     ($input:ident RepSep1 $sep:tt $($inner:tt)+) => {
@@ -125,7 +256,7 @@ macro_rules! match_token_cb {
 
         $crate::match_subparser!($input $($inner)*);
         // Repeatedly try to parse with a leading `sep`.
-        while $crate::match_try_parse!($input $sep $($inner)*) { }
+        while $crate::match_try_parse!($input $sep $($inner)*).is_ok() { }
     };
     // #(...)?
     ($input:ident Opt $($inner:tt)+) => {

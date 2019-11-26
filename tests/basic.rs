@@ -1,23 +1,18 @@
-use tt_match::tt_matcher;
+use tt_match::tt_match;
 use quote::{format_ident, quote};
-use syn::parse::Parser;
 
 macro_rules! check_expected {
     ($matcher:tt $quote:tt Err) => {{
-        tt_matcher! {
-            match fn matcher $matcher -> () { }
-        }
-
-        let is_err = Parser::parse2(&matcher, quote! $quote).is_err();
+        let is_err = tt_match!(match quote! $quote => {
+            $matcher => { panic!("match should have failed"); }
+        }).is_err();
         assert!(is_err, stringify!($quote));
     }};
 
     ($matcher:tt $quote:tt { $($e:tt)* }) => {{
-        tt_matcher! {
-            match fn matcher $matcher -> () { $($e)* }
-        }
-
-        Parser::parse2(&matcher, quote! $quote).expect(stringify!($quote));
+        tt_match!(match quote! $quote => {
+            $matcher => { $($e)* }
+        }).expect(stringify!($quote));
     }};
 }
 

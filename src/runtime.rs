@@ -12,7 +12,20 @@ pub use std::vec::Vec;
 
 pub use syn::parse::discouraged::Speculative;
 pub use syn::parse::{ParseStream, Parser};
-pub use syn::{Expr, Ident, Result, Error};
+pub use syn::{Result, Error};
+pub use syn::{
+    Item,
+    Block,
+    Stmt,
+    Pat,
+    Expr,
+    Type,
+    Ident,
+    Path,
+    Lifetime,
+    Visibility,
+    Lit,
+};
 
 pub use proc_macro2::{TokenStream, TokenTree};
 

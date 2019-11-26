@@ -1,7 +1,6 @@
 #[doc(hidden)]
 pub use syn::{
     braced as _syn_braced, bracketed as _syn_bracketed, parenthesized as _syn_parenthesized,
-    Token as _syn_Token,
 };
 
 // Not public API.
@@ -9,148 +8,68 @@ pub use syn::{
 #[path = "runtime.rs"]
 pub mod __rt;
 
-#[macro_export]
-macro_rules! token_matcher {
-    (in $input:ident=> $( ( $($t:tt)* ) => { $($e:tt)* } )*) => {
-        $(
-            match $crate::__rt::TokenSource::try_parse(
-                &input,
-                |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
-                     x
-                },
-            ) {
-                $crate::__rt::Ok(()) => {
-                    f
-                }
-            }
-        )*
-    };
-
-    ($(#[$m:meta])* $vis:vis fn $name:ident -> $rt:ty; $($t:tt)*) => {
-        $(#[$m])*
-        $vis fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$rt> {
-            $crate::token_matcher!(in input=> $($t)*);
-        }
-    };
-}
-
+/// The whole point.
+///
+/// Pattern match against an input `TokenStream`, and evaluate an expression.
+/// This acts like `macro_rules!` style matchers, but within a proc_macro.
+///
+/// # Supported Matchers
+///
+/// * Repetitions:
+///   * `#(...)*`, `#(...),*`, `#(...)+` and `#(...),+`
+/// * Optionals:
+///   * `#(...)?`
+/// * `#var:KIND`, where `KIND` is one of:
+///   * `item` ([`syn::Item`])
+///   * `block` ([`syn::Block`])
+///   * `stmt` ([`syn::Stmt`])
+///   * `pat` ([`syn::Pat`])
+///   * `expr` ([`syn::Expr`])
+///   * `ty` ([`syn::Type`])
+///   * `ident` ([`proc_macro2::Ident`])
+///   * `path` ([`syn::Path`])
+///   * `tt` ([`proc_macro2::TokenTree`])
+///   * `lifetime` ([`syn::Lifetime`](`struct@syn::Lifetime`))
+///   * `vis` ([`syn::Visibility`])
+///
+/// # Examples
+///
+/// ```
+/// # use tt_match::tt_match;
+/// # use quote::quote;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let input = quote! {
+///     static ref MY_NAME: MyType = MyType::new();
+/// };
+/// let (name, ty, value) = tt_match!(input=> (
+///     static ref #name:ident : #ty:ty = #value:expr;
+/// ) {
+///     (name, ty, value)
+/// })?;
+/// # Ok(())
+/// # }
+/// ```
 #[macro_export]
 macro_rules! tt_match {
-    (
-        match $input:expr => {
-            $( ( $($t:tt)* ) => { $($e:tt)* } )*
-        }
-    ) => {
-        loop {
-            let input: $crate::__rt::TokenStream = $input.into();
-            let mut fused = $crate::__rt::Error::new_spanned(
-                &input, "no rules matched this input",
-            );
-
-            $(
-                match $crate::__rt::Parser::parse2(
-                    |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
-                        // let var = Pending::new();
-                        $crate::match_each_cap!(new $($t)*);
-                        // -- parsing --
-                        $crate::match_each_token!([match_token_cb! input] $($t)*);
-                        if !input.is_empty() {
-                            return $crate::__rt::Err(input.error("unexpected token"));
-                        }
-                        // let var = var.finish();
-                        $crate::match_each_cap!(finish $($t)*);
-
-                        // Pattern Code
-                        $crate::__rt::Ok((|| { $($e)* })())
-                    },
-                    $input.into(),
-                ) {
-                    $crate::__rt::Ok(x) => break $crate::__rt::Ok(x),
-                    $crate::__rt::Err(err) => fused.combine(err),
+    ($input:expr => ( $($t:tt)* ) { $($e:tt)* }) => {
+        $crate::__rt::Parser::parse2(
+            |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
+                // let var = Pending::new();
+                $crate::match_each_cap!(new $($t)*);
+                // -- parsing --
+                $crate::match_each_token!([match_token_cb! input] $($t)*);
+                if !input.is_empty() {
+                    return $crate::__rt::Err(input.error("unexpected token"));
                 }
-            )*
+                // let var = var.finish();
+                $crate::match_each_cap!(finish $($t)*);
 
-            break $crate::__rt::Err(fused);
-        }
-    };
-}
-
-/// Parser lambda with the signature `Fn(ParseStream) -> syn::Result<$T>`.
-///
-/// Lambda will implement [`syn::parse::Parser`].
-///
-/// ```
-/// # use tt_match::tt_match_parser;
-/// let parser = tt_match_parser! {
-///     (#(#id:ident),*) -> Vec<syn::Ident> { id }
-/// };
-/// ```
-///
-/// ```
-/// # use tt_match::tt_match_parser;
-/// let parser = tt_match_parser!(-> (bool, Vec<syn::Ident>) {
-///     (#(Yes #id:ident),*) => { (true, id) }
-///     (#(No #id:ident),*) => { (false, id) }
-/// });
-/// ```
-#[macro_export]
-macro_rules! tt_match_parser {
-    (($($t:tt)*) -> $T:ty { $($e:tt)* }) => {
-        |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<$T> {
-            // let var = Pending::new();
-            $crate::match_each_cap!(new $($t)*);
-            // -- parsing --
-            $crate::match_each_token!([match_token_cb! input] $($t)*);
-            if !input.is_empty() {
-                return $crate::__rt::Err(input.error("unexpected token"));
-            }
-            // let var = var.finish();
-            $crate::match_each_cap!(finish $($t)*);
-
-            // Pattern Code
-            $crate::__rt::Ok((|| -> $T { $($e)* })())
-        }
-    };
-    (-> $T:ty { $(( $($t:tt)* ) => { $($e:tt)* })* }) => {
-        |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<$T> {
-            let mut fused = input.error("no rules matched this input");
-            $({
-                let fork = input.fork();
-                let parser = $crate::tt_match_parser!(($($t)*) -> $T { $($e)* });
-                match parser(&fork) {
-                    $crate::__rt::Ok(x) => {
-                        use $crate::__rt::Speculative;
-                        input.advance_to(&fork);
-                        return $crate::__rt::Ok(x);
-                    },
-                    $crate::__rt::Err(err) => fused.combine(err),
-                }
-            })*
-            $crate::__rt::Err(fused)
-        }
-    };
-}
-
-/// The whole point
-#[macro_export]
-macro_rules! tt_matcher {
-    (
-        $(#[$m:meta])*
-        $vis:vis match fn $name:ident($($t:tt)*) -> $T:ty { $($e:tt)* }
-    ) => {
-        $(#[$m])*
-        $vis fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$T> {
-            // let var = Pending::new();
-            $crate::match_each_cap!(new $($t)*);
-            // -- parsing --
-            $crate::match_each_token!([match_token_cb! input] $($t)*);
-            // let var = var.finish();
-            $crate::match_each_cap!(finish $($t)*);
-
-            // Pattern Code
-            $crate::__rt::Ok((|| -> $T { $($e)* })())
-        }
-    };
+                // Pattern Code
+                $crate::__rt::Ok((|| { $($e)* })())
+            },
+            $input.into(),
+        )
+    }
 }
 
 #[macro_export]

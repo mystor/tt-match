@@ -3,16 +3,15 @@ use quote::{format_ident, quote};
 
 macro_rules! check_expected {
     ($matcher:tt $quote:tt Err) => {{
-        let is_err = tt_match!(match quote! $quote => {
-            $matcher => { panic!("match should have failed"); }
+        let is_err = tt_match!(quote! $quote => $matcher {
+            panic!("match should have failed");
         }).is_err();
         assert!(is_err, stringify!($quote));
     }};
 
     ($matcher:tt $quote:tt { $($e:tt)* }) => {{
-        tt_match!(match quote! $quote => {
-            $matcher => { $($e)* }
-        }).expect(stringify!($quote));
+        tt_match!(quote! $quote => $matcher { $($e)* })
+            .expect(stringify!($quote));
     }};
 }
 

@@ -3,6 +3,7 @@
 
 use proc_macro2::Spacing;
 use std::marker::PhantomData;
+use syn::parse::ParseBuffer;
 
 // re-exports
 pub use std::mem::drop;
@@ -120,6 +121,42 @@ impl<T, P> ParentContainer<T> for Active<Option<T>, P> {
     fn insert(&mut self, value: T) {
         assert!(self.value.is_none());
         self.value = Some(value);
+    }
+}
+
+pub trait TokenSource {
+    fn run_parser<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(ParseStream) -> Result<R>;
+}
+
+impl TokenSource for TokenStream {
+    fn run_parser<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(ParseStream) -> Result<R>,
+    {
+        f.parse2(self.clone())
+    }
+}
+
+impl<'a> TokenSource for ParseBuffer<'a> {
+    fn run_parser<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(ParseStream) -> Result<R>,
+    {
+        f(self)
+    }
+}
+
+impl<'a, T> TokenSource for &'a T
+where
+    T: TokenSource,
+{
+    fn run_parser<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(ParseStream) -> Result<R>,
+    {
+        (**self).run_parser(f)
     }
 }
 

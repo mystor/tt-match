@@ -52,7 +52,8 @@ pub mod __rt;
 #[macro_export]
 macro_rules! tt_match {
     ($input:expr => ( $($t:tt)* ) { $($e:tt)* }) => {
-        $crate::__rt::Parser::parse2(
+        $crate::__rt::TokenSource::run_parser(
+            &$input,
             |input: $crate::__rt::ParseStream| -> $crate::__rt::Result<_> {
                 // let var = Pending::new();
                 $crate::match_each_cap!(new $($t)*);
@@ -67,8 +68,49 @@ macro_rules! tt_match {
                 // Pattern Code
                 $crate::__rt::Ok((|| { $($e)* })())
             },
-            $input.into(),
         )
+    }
+}
+
+/// Generates a `fn` which acts as a parser. Can be used for declaring `parse`
+/// methods for types.
+///
+/// # Example
+///
+/// ```
+/// # use tt_match::tt_match_parser;
+/// # use quote::quote;
+/// struct LazyStatic {
+///     name: syn::Ident,
+///     ty: syn::Type,
+///     value: syn::Expr,
+/// }
+///
+/// impl syn::parse::Parse for LazyStatic {
+///     tt_match_parser! {
+///         fn parse(
+///             static ref #name:ident : #ty:ty = #value:expr;
+///         ) -> Self {
+///             Self { name, ty, value }
+///         }
+///     }
+/// }
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let input = quote! {
+///     static ref MY_NAME: MyType = MyType::new();
+/// };
+/// let parsed = syn::parse2::<LazyStatic>(input)?;
+/// # Ok(())
+/// # }
+/// ```
+#[macro_export]
+macro_rules! tt_match_parser {
+    ($(#[$m:meta])* $v:vis fn $name:ident( $($t:tt)* ) -> $T:ty { $($e:tt)* }) => {
+        $(#[$m])*
+        $v fn $name(input: $crate::__rt::ParseStream) -> $crate::__rt::Result<$T> {
+            $crate::tt_match!(input => ( $($t)* ) { $($e)* })
+        }
     }
 }
 
